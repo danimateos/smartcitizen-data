@@ -107,18 +107,38 @@ def _sync_compute_metrics(device, device_id, folder):
         logger.info("Exporting device %s raw data", device_id)
         # keep an exported raw CSV for debugging/archive
         try:
-            device.export(folder, forced_overwrite=True, gzip=True)
+            device.export(folder, forced_overwrite=False, gzip=True)
         except Exception:
             logger.info("Raw export failed for device %s (non-fatal)", device_id)
 
         logger.info("get_nan_ratio for device %s", device_id)
-        device.get_nan_ratio().to_csv(f"{folder}/{device_id}_nan_ratios.csv.gz")
+        filename = f"{folder}/{device_id}_nan_ratios.csv.gz"
+        if os.path.exists(filename):
+            logger.info("File %s already exists, skipping", filename)
+        else:
+            device.get_nan_ratio().to_csv(filename)
+
         logger.info("get_implausible_ratio for device %s", device_id)
-        device.get_implausible_ratio().to_csv(f"{folder}/{device_id}_implausible_ratios.csv.gz")
+        filename = f"{folder}/{device_id}_implausible_ratios.csv.gz"
+        if os.path.exists(filename):
+            logger.info("File %s already exists, skipping", filename)
+        else:
+            device.get_implausible_ratio().to_csv(filename)
+
         logger.info("get_outlier_ratio for device %s", device_id)
-        device.get_outlier_ratio().to_csv(f"{folder}/{device_id}_outlier_ratios.csv.gz")
+        filename = f"{folder}/{device_id}_outlier_ratios.csv.gz"
+        if os.path.exists(filename):
+            logger.info("File %s already exists, skipping", filename)
+        else:
+            device.get_outlier_ratio().to_csv(filename)
+
         logger.info("get_top_value_ratio for device %s", device_id)
-        device.get_top_value_ratio().to_csv(f"{folder}/{device_id}_top_value_ratios.csv.gz")
+        filename = f"{folder}/{device_id}_top_value_ratios.csv.gz"
+        if os.path.exists(filename):
+            logger.info("File %s already exists, skipping", filename)
+        else:
+            device.get_top_value_ratio().to_csv(filename)
+
     except Exception:
         logger.exception("Synchronous metric computation failed for device %s", device_id)
         return False
