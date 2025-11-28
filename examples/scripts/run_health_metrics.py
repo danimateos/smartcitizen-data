@@ -26,19 +26,30 @@ async def _async_process_device(device_id, folder="twinair_health_metrics", min_
     """
     _logger = logging.getLogger(__name__)
 
-    sleepytime = random() * 6
+    sleepytime = random() * 2
     _logger.info("Sleeping %.2f seconds before starting device %s", sleepytime, device_id)
     time.sleep(sleepytime)  # Stagger start times to reduce API load
 
     try:
-        device = sc.Device(blueprint='sc_air', params=sc.APIParams(id=device_id))
+        device = sc.Device(blueprint='sc_air', params=sc.APIParams(id=device_id, index='timestamp'))
         if min_date is not None:
             device.options.min_date = min_date
         if max_date is not None:
             device.options.max_date = max_date
 
+        long_name_to_id = {sensor.name: sensor.id for sensor in device.sensors}
+        long_name_to_id["timestamp"] = -1
+        id_to_short_name = {sensor.id: sensor.name  for sensor in sc.config.names["SCDevice"]}
+        id_to_short_name[-1] = "timestamp"
+
+        temp_df = pd.read_csv(f"twinair_csvs/{device_id}.csv.gz")
+        temp_df.columns = temp_df.columns.map(name_regex)\
+                                         .map(long_name_to_id)\
+                                         .map(id_to_short_name)
+        temp_df.to_csv(f"twinair_cache/{device_id}.csv.gz", index=False)
+
         _logger.info("Getting data for device %s", device_id)
-        await device.load()
+        await device.load(cache=f"twinair_cache/{device_id}.csv.gz")
 
     except requests.exceptions.HTTPError as e:
         _logger.error("Failed to instantiate or load device %s: %s", device_id, e)
@@ -63,6 +74,18 @@ async def _async_process_device(device_id, folder="twinair_health_metrics", min_
         return False
 
     return True
+
+
+def name_regex(column_name):
+    """Extract long name from column name using regex."""
+    import re
+
+    match = re.compile(r".*\((.*)\)$").match(column_name)
+    logging.getLogger(__name__).debug("Original column name: %s", column_name)
+    column_name = column_name if match is None else match.groups()[0]
+    logging.getLogger(__name__).debug("New column name: %s", column_name)
+
+    return column_name
 
 
 def process_device(device_id, folder="twinair_health_metrics", min_date=None, max_date=None):
@@ -185,7 +208,7 @@ if __name__ == "__main__":
             return results
 
         try:
-            asyncio.run(_run_all(device_ids, "twinair_health_metrics", "2025-01-01", None, executor))
+            asyncio.run(_run_all(device_ids, "twinair_health_metrics", None, None, executor))
         finally:
             executor.shutdown(wait=True)
     else:

@@ -157,7 +157,8 @@ def read_csv_file(path, timezone, frequency=None, clean_na=None, index_name='', 
         flag_found = True
 
     if not flag_found:
-        logger.error('Index not found. Cannot reindex')
+        logger.error(f'Index not found. Cannot reindex. Looked for {index_name} within {df.columns}. Index name is {df.index.name}')
+
         return None
 
     # Set index

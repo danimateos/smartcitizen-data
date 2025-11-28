@@ -305,6 +305,8 @@ class Device(BaseModel):
         cached_data = DataFrame()
 
         # Only case where cache makes sense
+        logger.info(f'Loading device {self.paramsParsed.id} data from source type {self.source.type}, cache at {cache}')
+
         if self.source.type == 'api':
             if cache is not None and cache:
                 if not exists(cache):
@@ -320,7 +322,7 @@ class Device(BaseModel):
                             frequency = frequency,
                             clean_na = clean_na,
                             resample = resample,
-                            index_name = 'TIME')
+                            index_name = 'timestamp')
                     else:
                         raise NotImplementedError(f'Cache needs to be a .csv file. Got {cache}.')
 
