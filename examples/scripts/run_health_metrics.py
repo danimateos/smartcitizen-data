@@ -7,12 +7,11 @@ import matplotlib.pyplot as plt
 import requests
 from tqdm import tqdm
 import scdata as sc
-from concurrent.futures import ThreadPoolExecutor
-import multiprocessing
 import time
+import os
 from random import random
 
-async def _async_process_device(device_id, folder="twinair_health_metrics", min_date=None, max_date=None, executor=None):
+async def _async_process_device(device_id, folder="twinair_health_metrics", min_date=None, max_date=None):
     """
     Async worker that loads a device and computes health metrics.
 
@@ -25,10 +24,6 @@ async def _async_process_device(device_id, folder="twinair_health_metrics", min_
     Returns True on success, False on error or when no data.
     """
     _logger = logging.getLogger(__name__)
-
-    sleepytime = random() * 2
-    _logger.info("Sleeping %.2f seconds before starting device %s", sleepytime, device_id)
-    time.sleep(sleepytime)  # Stagger start times to reduce API load
 
     try:
         device = sc.Device(blueprint='sc_air', params=sc.APIParams(id=device_id, index='timestamp'))
@@ -62,54 +57,14 @@ async def _async_process_device(device_id, folder="twinair_health_metrics", min_
         _logger.warning("No data for device %s, skipping health metrics", device_id)
         return False
 
-    try:
-        # Offload metric computation to a thread from the provided executor
-        loop = asyncio.get_running_loop()
-        success = await loop.run_in_executor(executor, _sync_compute_metrics, device, device_id, folder)
-        if not success:
-            _logger.error("Metric computation failed for device %s", device_id)
-            return False
-    except Exception:
-        _logger.exception("Failed processing metrics for device %s", device_id)
-        return False
-
-    return True
-
-
-def name_regex(column_name):
-    """Extract long name from column name using regex."""
-    import re
-
-    match = re.compile(r".*\((.*)\)$").match(column_name)
-    logging.getLogger(__name__).debug("Original column name: %s", column_name)
-    column_name = column_name if match is None else match.groups()[0]
-    logging.getLogger(__name__).debug("New column name: %s", column_name)
-
-    return column_name
-
-
-def process_device(device_id, folder="twinair_health_metrics", min_date=None, max_date=None):
-    """Synchronous wrapper that runs the async device worker to completion.
-
-    Call this from synchronous code. For parallel execution you can call
-    `_async_process_device` directly inside an asyncio event loop.
-    """
-    return asyncio.run(_async_process_device(device_id, folder=folder, min_date=min_date, max_date=max_date))
-
-
-def _sync_compute_metrics(device, device_id, folder):
-    """Synchronous metric computation that runs inside a worker thread.
-
-    Runs Device.get_* methods and writes CSVs to `folder`.
-    """
-    logger = logging.getLogger(__name__)
+    # Compute metrics and write to csv synchronously.
     try:
         logger.info("Exporting device %s raw data", device_id)
         # keep an exported raw CSV for debugging/archive
         try:
             device.export(folder, forced_overwrite=False, gzip=True)
         except Exception:
-            logger.info("Raw export failed for device %s (non-fatal)", device_id)
+            logger.warning("Raw export failed for device %s (non-fatal)", device_id)
 
         logger.info("get_nan_ratio for device %s", device_id)
         filename = f"{folder}/{device_id}_nan_ratios.csv.gz"
@@ -144,6 +99,26 @@ def _sync_compute_metrics(device, device_id, folder):
         return False
     return True
 
+
+def name_regex(column_name):
+    """Extract long name from column name using regex."""
+    import re
+
+    match = re.compile(r".*\((.*)\)$").match(column_name)
+    logging.getLogger(__name__).debug("Original column name: %s", column_name)
+    column_name = column_name if match is None else match.groups()[0]
+    logging.getLogger(__name__).debug("New column name: %s", column_name)
+
+    return column_name
+
+
+def process_device(device_id, folder="twinair_health_metrics", min_date=None, max_date=None):
+    """Synchronous wrapper that runs the async device worker to completion.
+
+    Call this from synchronous code. For parallel execution you can call
+    `_async_process_device` directly inside an asyncio event loop.
+    """
+    return asyncio.run(_async_process_device(device_id, folder=folder, min_date=min_date, max_date=max_date))
 
 
 if __name__ == "__main__":
@@ -206,30 +181,11 @@ if __name__ == "__main__":
     # Schedule all device tasks concurrently (no semaphore / batching)
     device_ids = list(these["id"]) if len(these["id"]) else []
     if device_ids:
-        logger.info("Processing %d devices concurrently", len(device_ids))
+        logger.info("Processing %d devices sequentially", len(device_ids))
 
-        # Create a thread pool sized to CPU cores for metric computation
-        executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
 
-        async def _run_all(device_ids, folder, min_date, max_date, executor):
-            tasks = [asyncio.create_task(_async_process_device(int(d), folder=folder, min_date=min_date, max_date=max_date, executor=executor)) for d in device_ids]
+        for device_id in device_ids:
+           process_device(int(device_id), folder="twinair_health_metrics", min_date=None, max_date=None)
 
-            pbar = tqdm(total=len(tasks))
-            results = []
-            for fut in asyncio.as_completed(tasks):
-                try:
-                    res = await fut
-                except Exception:
-                    logger.exception("Unhandled exception in device task")
-                    res = False
-                results.append(res)
-                pbar.update(1)
-            pbar.close()
-            return results
-
-        try:
-            asyncio.run(_run_all(device_ids, "twinair_health_metrics", None, None, executor))
-        finally:
-            executor.shutdown(wait=True)
     else:
         logger.info("No devices to process")
