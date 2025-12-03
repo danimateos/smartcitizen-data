@@ -8,14 +8,16 @@ from scdata.tools.date import localise_date
 from scdata.tools.dictmerge import dict_fmerge
 from scdata.tools.units import get_units_convf
 from scdata.tools.find import find_by_field
-from scdata.tools.series import count_nas, infer_sampling_rate, mode_ratio, normalize_central, rolling_deltas
+from scdata.tools.series import count_nas, infer_sampling_rate, mode_ratio, normalize_central, rolling_deltas, rolling_top_value_ratio_time
 from scdata._config import config
 from scdata.io.device_api import *
 from scdata.models import Blueprint, Metric, Source, APIParams, CSVParams, DeviceOptions, Sensor
 
 from os.path import join, basename, exists
 from urllib.parse import urlparse
+import pandas as pd
 from pandas import DataFrame, Series, to_timedelta, Timedelta
+import numpy as np
 from numpy import nan
 from collections.abc import Iterable
 from importlib import import_module
@@ -119,7 +121,7 @@ class Device(BaseModel):
             try:
                hmod = import_module(module)
             except ModuleNotFoundError:
-                logger.error(f"Module not found: {module}")
+                logger.error(f'Module not found: {module}')
                 raise ModuleNotFoundError(f'Specified module not found')
             else:
                 self.hclass = getattr(hmod, self.source.handler)
@@ -153,7 +155,7 @@ class Device(BaseModel):
         if self.hclass is not None:
             self.handler = self.hclass(params = self.paramsParsed)
         else:
-            raise ValueError("Devices need one handler")
+            raise ValueError('Devices need one handler')
 
     def __set_blueprint_attrs__(self, blueprint):
         # Set attributes
@@ -250,7 +252,7 @@ class Device(BaseModel):
         if self.__check_callable__(_metric.module, _metric.function):
             self.metrics.append(_metric)
 
-            logger.info(f"Metric {_metric.name} added to metrics")
+            logger.info(f'Metric {_metric.name} added to metrics')
             self._rename[_metric.name] = _metric.name
             return True
 
@@ -331,7 +333,7 @@ class Device(BaseModel):
                     # Update min_date
                     min_date=cached_data.index[-1].tz_convert('UTC')+Timedelta(frequency)
 
-        # Not implemented "for now"
+        # Not implemented 'for now'
         elif self.source.type == 'stream':
             raise NotImplementedError('Source type stream not implemented yet')
 
@@ -421,7 +423,7 @@ class Device(BaseModel):
 
     def __check_callable__(self, module, function):
         # Check if the metric contains a custom module
-        lazy_name = f"{module}.{function}"
+        lazy_name = f'{module}.{function}'
 
         try:
             funct = LazyCallable(lazy_name)
@@ -484,7 +486,7 @@ class Device(BaseModel):
                 continue
 
             if self.__check_callable__(metric.module, metric.function):
-                funct = LazyCallable(f"{metric.module}.{metric.function}")
+                funct = LazyCallable(f'{metric.module}.{metric.function}')
             else:
                 process_ok &= False
                 logger.error('Problem adding lazy callable to metrics list')
@@ -520,7 +522,7 @@ class Device(BaseModel):
                         process_ok &= True
 
         if process_ok:
-            logger.info(f"Device {self.paramsParsed.id} processed")
+            logger.info(f'Device {self.paramsParsed.id} processed')
             self.processed = process_ok
 
         return self.processed
@@ -557,14 +559,14 @@ class Device(BaseModel):
 
         return self.postprocessing_updated
 
-    def get_nan_ratio(self, period:str="1h", subset:List[str]=None, suffix:str="_nan_ratio", sampling_rates:Dict[str, int]=None) -> DataFrame:
+    def get_nan_ratio(self, period:str='1h', subset:List[str]=None, suffix:str='_nan_ratio', sampling_rates:Dict[str, int]=None) -> DataFrame:
         '''
             Check NaN ratio per column, return pd.DataFrame with the same index as
             self.data with the NaN ratio per rolling window.
             Parameters
             ----------
                 period: str
-                    "1h"
+                    '1h'
                     Rolling window width.
                 subset: List[str]
                     Columns to apply the stuck ratio calculation to. If None, all columns
@@ -652,7 +654,7 @@ class Device(BaseModel):
         return nullable
 
 
-    def get_implausible_ratio(self, period:str="1h", subset:List[str]=None, suffix:str="_implausible_ratio", plausible_intervals:Dict[str, List[int]]=None) -> DataFrame:
+    def get_implausible_ratio(self, period:str='1h', subset:List[str]=None, suffix:str='_implausible_ratio', plausible_intervals:Dict[str, List[int]]=None) -> DataFrame:
         '''Scan the series for values outside the plausible interval for the
         physical magnitude, as defined by plausible_interval or
         config._default_unplausible_values. For example, we find values of
@@ -696,14 +698,14 @@ class Device(BaseModel):
 
         return DataFrame(result)
 
-    def get_outlier_ratio(self, period:str="1h", subset:List[str]=None, suffix:str="_outlier_ratio", sigma=5, pct=0.05) -> DataFrame:
+    def get_outlier_ratio(self, period:str='1h', subset:List[str]=None, suffix:str='_outlier_ratio', sigma=5, pct=0.05) -> DataFrame:
         '''Get the percentage of outlier values based on the rate of increase. When sensors
         report sudden jumps, these are likely to be erroneous values. 
 
         Parameters
         ----------
             period: str
-                "1h"
+                '1h'
                 Rolling window width.
             subset: List[str]
                 Columns to apply the outlier ratio calculation to. If None, all columns
@@ -778,40 +780,46 @@ class Device(BaseModel):
 
         return outliers
 
-    def get_top_value_ratio(self, period:str="1h", subset:List[str]=None, suffix:str="_top_value_ratio", ignore_zeroes=True) -> DataFrame:
-        '''
-            Check the frequency of the mode (top value) per column, return
-            pd.DataFrame with the same index as self.data with the mode ratio
-            per rolling window.
 
-            Parameters
-            ----------
-                period: str
-                    "1h"
-                    Rolling window width.
-                subset: List[str]
-                    Columns to apply the stuck ratio calculation to. If None, all columns
-                    are used.
-                ignore_zeroes: boolean
-                    True
-                    Ignore zeroes when checking for stuck values. Passed through to mode_ratio()
-            Returns
-            ----------
-                result: DataFrame
-                    DataFrame with rolling mode ratio.
+    def get_top_value_ratio(
+        self,
+        period: str = '1h',
+        subset: List[str] = None,
+        suffix: str = '_top_value_ratio',
+        ignore_zeroes: bool = True,
+    ) -> DataFrame:
         '''
+        Check the frequency of the mode (top value) per column, return
+        DataFrame with the same index as self.data with the mode ratio
+        per rolling window.
+        '''
+
         if not self.loaded:
             logger.error('Need to load first (device.load())')
             return False
 
+        # 1) Choose columns
         if subset is not None:
-            data = self.data[subset]
+            data = self.data[subset].copy()
         else:
-            data = self.data
+            data = self.data.copy()
 
-        rolling = data.rolling(period)
-        result = rolling.apply(lambda w: mode_ratio(w, ignore_zeroes), raw=False)
-        result.columns = [col + suffix for col in result.columns]
+        # 2) Handle 'ignore zeroes' by turning zeros into NaN
+        #    (they won't be counted in the mode or window length)
+        if ignore_zeroes:
+            data = data.mask(data == 0)
+
+        # 3) Convert time-based period (e.g. '1h') to a window length in samples
+        #    Assumes roughly regular sampling; uses median timestep.
+        period_td = pd.to_timedelta(period)
+
+        # 4) Apply fast rolling top-value ratio per column
+        result = pd.DataFrame(index=data.index)
+
+        for column in data.columns:
+            arr = data[column].to_numpy()
+            times = data.index
+            result[column + suffix] = rolling_top_value_ratio_time(arr, times, period_td)
 
         return result
 
@@ -905,18 +913,18 @@ class Device(BaseModel):
 
         post_ok = self.handler.patch_postprocessing(dry_run=dry_run)
 
-        if post_ok: logger.info(f"Postprocessing posted for device {self.paramsParsed.id}")
+        if post_ok: logger.info(f'Postprocessing posted for device {self.paramsParsed.id}')
         return post_ok
 
     def backup(self, format='parquet', mode='append'):
         if self.data.empty:
-            logger.error("Device data empty")
+            logger.error('Device data empty')
             return False
 
         if format == 'parquet':
             if boto_available:
                 self.data['TIME']=self.data.index
-                target_path = f"s3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/"
+                target_path = f's3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/'
                 response = wr.s3.to_parquet(df=self.data, path=target_path, dataset=True, mode=mode)
 
                 return response
@@ -927,7 +935,7 @@ class Device(BaseModel):
                 session = boto3.Session(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
                 aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
                 region_name=os.environ['AWS_REGION'])
-                s3_url = f"s3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/"
+                s3_url = f's3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/'
                 self.data = wr.s3.read_parquet(s3_url, boto3_session=session, dataset=True)
                 self.data.set_index('TIME', inplace=True)
                 self.data.sort_index(inplace=True)
