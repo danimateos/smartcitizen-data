@@ -924,7 +924,7 @@ class Device(BaseModel):
         if format == 'parquet':
             if boto_available:
                 self.data['TIME']=self.data.index
-                target_path = f's3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/'
+                target_path = f"s3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/"
                 response = wr.s3.to_parquet(df=self.data, path=target_path, dataset=True, mode=mode)
 
                 return response
@@ -935,7 +935,7 @@ class Device(BaseModel):
                 session = boto3.Session(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
                 aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
                 region_name=os.environ['AWS_REGION'])
-                s3_url = f's3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/'
+                s3_url = f"s3://{os.environ['S3_DATA_BUCKET']}/devices/{self.id}/data/"
                 self.data = wr.s3.read_parquet(s3_url, boto3_session=session, dataset=True)
                 self.data.set_index('TIME', inplace=True)
                 self.data.sort_index(inplace=True)

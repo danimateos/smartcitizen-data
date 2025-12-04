@@ -62,16 +62,21 @@ def normalize_central(series: Series, pct=0.05) -> Series:
 def rolling_top_value_ratio_time(values: np.ndarray,
                                   times: DatetimeIndex,
                                   window_td: Timedelta) -> np.ndarray:
-    """
-    values: 1D numpy array (may contain NaN; NaNs are ignored)
-    times:  1D numpy array of datetime64[ns], same length as values
-    window_td: pandas Timedelta, e.g. pd.Timedelta("1h")
+    '''Compute the rolling ratio of the most common value in a time window.
+
+    Parameters:
+    ----------
+
+        values: 1D numpy array (may contain NaN; NaNs are ignored)
+        times:  DatetimeIndex, same length as values
+        window_td: pandas Timedelta, e.g. pd.Timedelta("1h")
 
     Returns:
+    -------
         1D float array: for each position i, the frequency of the most
         common value in the time window (times in (t_i - window_td, t_i]),
         or NaN if no valid values.
-    """
+    '''
     n = len(values)
     out = np.full(n, np.nan, dtype=float)
     if n == 0:
